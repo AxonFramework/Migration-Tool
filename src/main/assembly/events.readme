@@ -1,0 +1,2 @@
+Place the jars containing events in this folder.
+Note that all dependencies that these events may have (e.g. value objects) should also be placed in this folder
