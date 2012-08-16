@@ -50,16 +50,19 @@ public class JpaEventStoreMigrator {
     private List<EventUpcaster> upcasters;
 
     public static void main(String[] args) throws Exception {
-        ClassPathXmlApplicationContext context = new ClassPathXmlApplicationContext(
-                "/META-INF/spring/migration-config.xml",
-                "file:app-specific-context.xml");
-        JpaEventStoreMigrator runner = new JpaEventStoreMigrator();
         try {
+            ClassPathXmlApplicationContext context = new ClassPathXmlApplicationContext(
+                    "/META-INF/spring/migration-config.xml",
+                    "file:app-specific-context.xml");
+            JpaEventStoreMigrator runner = new JpaEventStoreMigrator();
             runner.run(context);
             context.stop();
         } catch (Throwable e) {
             e.printStackTrace();
         } finally {
+            while(System.in.available() > 0) {
+                System.in.skip(System.in.available());
+            }
             System.out.println("Press enter to quit");
             new Scanner(System.in).nextLine();
         }
