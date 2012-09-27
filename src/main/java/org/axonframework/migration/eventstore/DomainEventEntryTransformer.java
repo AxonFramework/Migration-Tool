@@ -47,8 +47,8 @@ public class DomainEventEntryTransformer {
 
     private final Set<String> silencedIdentifiers = new ConcurrentSkipListSet<String>();
 
-    public boolean transform(DomainEventEntry entry, List<EventUpcaster> upcasters) throws Exception {
-        final byte[] payload = entry.getSerializedEvent();
+    public NewDomainEventEntry transform(DomainEventEntry oldEntry, List<EventUpcaster> upcasters) throws Exception {
+        final byte[] payload = oldEntry.getSerializedEvent();
         if (payload != null) {
             Document eventPayload = new STAXEventReader().readDocument(new InputStreamReader(
                     new ByteArrayInputStream(payload), UTF_8));
@@ -63,25 +63,31 @@ public class DomainEventEntryTransformer {
                 if (Boolean.parseBoolean(configuration.getProperty("autoResolveIdentifier"))) {
                     newIdentifierName = guessNewIdentifierName(rootElement);
                 }
-                if (newIdentifierName == null) {
+                if (newIdentifierName == null || "".equals(newIdentifierName)) {
                     if (silencedIdentifiers.add(rootElement.getName())) {
                         System.out.println(format("No identifier mapping available for [%s]", rootElement.getName()));
                     }
-                    return false;
+                    // return entry with gaps...
+                    final NewDomainEventEntry entry = new NewDomainEventEntry(oldEntry);
+                    entry.setEventIdentifier("");
+                    entry.setPayloadType("");
+                    return entry;
                 }
             }
+            NewDomainEventEntry newEntry = new NewDomainEventEntry(oldEntry);
             final Element metaData = rootElement.element("metaData");
             final String payloadType = rootElement.getName();
             final String payloadRevision = rootElement.attributeValue("eventRevision");
 
-            entry.setPayloadType(payloadType);
-            entry.setPayloadRevision(payloadRevision);
+            newEntry.setPayloadType(payloadType);
+            newEntry.setPayloadRevision(payloadRevision);
 
             rootElement.remove(metaData);
+            rootElement.remove(rootElement.element("sequenceNumber"));
             rootElement.remove(rootElement.attribute("eventRevision"));
-            rootElement.element("aggregateIdentifier").setName(getIdentifier(payloadType));
+            rootElement.element("aggregateIdentifier").setName(newIdentifierName);
 
-            entry.setPayload(rootElement.asXML().getBytes(UTF_8));
+            newEntry.setPayload(rootElement.asXML().getBytes(UTF_8));
             metaData.setName("meta-data");
             final Element values = metaData.element("values");
             Iterator<Element> it = values.elementIterator();
@@ -91,17 +97,17 @@ public class DomainEventEntryTransformer {
                 Element keyElement = (Element) metaDataEntry.elements().get(0);
                 Element valueElement = (Element) metaDataEntry.elements().get(1);
                 if ("_identifier".equals(keyElement.getTextTrim())) {
-                    entry.setEventIdentifier(valueElement.getTextTrim());
+                    newEntry.setEventIdentifier(valueElement.getTextTrim());
                 } else if (!"_timestamp".equals(keyElement.getTextTrim())) {
                     values.remove(metaDataEntry);
                     metaData.add(metaDataEntry);
                 }
             }
             metaData.remove(values);
-            entry.setMetaData(metaData.asXML().getBytes(UTF_8));
-            return true;
+            newEntry.setMetaData(metaData.asXML().getBytes(UTF_8));
+            return newEntry;
         }
-        return false;
+        return null;
     }
 
     private String guessNewIdentifierName(Element rootElement) {
