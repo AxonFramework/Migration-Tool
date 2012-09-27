@@ -18,5 +18,7 @@
     <persistence-unit name="migration" transaction-type="RESOURCE_LOCAL">
         <class>org.axonframework.migration.eventstore.DomainEventEntry</class>
         <class>org.axonframework.migration.eventstore.NewDomainEventEntry</class>
+        <class>org.axonframework.migration.sagas.SagaEntry</class>
+        <class>org.axonframework.migration.sagas.AssociationValueEntry</class>
     </persistence-unit>
 </persistence>

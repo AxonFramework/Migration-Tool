@@ -35,7 +35,6 @@
             <bean class="org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter">
                 <property name="databasePlatform" value="${db.sql.dialect}"/>
                 <property name="generateDdl" value="${db.sql.generateddl}"/>
-                <property name="showSql" value="${db.sql.show}"/>
             </bean>
         </property>
         <property name="dataSource" ref="dataSource"/>
@@ -47,9 +46,7 @@
         </property>
     </bean>
 
-    <bean class="org.axonframework.migration.eventstore.DomainEventEntryTransformer">
-        <!-- TODO: Place upcasters here -->
-    </bean>
+    <bean class="org.axonframework.migration.eventstore.DomainEventEntryTransformer"/>
 
     <util:properties id="identifierMapping" location="file:identifiers.properties"/>
     <util:properties id="configuration" location="file:migration.properties"/>

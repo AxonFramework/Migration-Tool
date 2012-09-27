@@ -4,11 +4,10 @@ import com.thoughtworks.xstream.XStream;
 import com.thoughtworks.xstream.mapper.CannotResolveClassException;
 import org.axonframework.common.ReflectionUtils;
 import org.axonframework.eventstore.EventUpcaster;
+import org.axonframework.serializer.SerializedDomainEventData;
 import org.dom4j.Document;
 import org.dom4j.Element;
 import org.dom4j.io.STAXEventReader;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 
@@ -23,6 +22,7 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentSkipListSet;
+import javax.xml.stream.XMLStreamException;
 
 import static java.lang.String.format;
 
@@ -32,7 +32,6 @@ import static java.lang.String.format;
 public class DomainEventEntryTransformer {
 
     private static final Charset UTF_8 = Charset.forName("UTF-8");
-    private static final Logger logger = LoggerFactory.getLogger(DomainEventEntryTransformer.class);
 
     @Autowired
     @Qualifier("identifierMapping")
@@ -47,8 +46,10 @@ public class DomainEventEntryTransformer {
 
     private final Set<String> silencedIdentifiers = new ConcurrentSkipListSet<String>();
 
-    public NewDomainEventEntry transform(DomainEventEntry oldEntry, List<EventUpcaster> upcasters) throws Exception {
-        final byte[] payload = oldEntry.getSerializedEvent();
+    public SerializedDomainEventData transform(byte[] serializedEvent, String aggregateType,
+                                               String aggregateIdentifier, long sequenceNumber, String timeStamp,
+                                               List<EventUpcaster> upcasters) throws XMLStreamException {
+        final byte[] payload = serializedEvent;
         if (payload != null) {
             Document eventPayload = new STAXEventReader().readDocument(new InputStreamReader(
                     new ByteArrayInputStream(payload), UTF_8));
@@ -67,14 +68,11 @@ public class DomainEventEntryTransformer {
                     if (silencedIdentifiers.add(rootElement.getName())) {
                         System.out.println(format("No identifier mapping available for [%s]", rootElement.getName()));
                     }
-                    // return entry with gaps...
-                    final NewDomainEventEntry entry = new NewDomainEventEntry(oldEntry);
-                    entry.setEventIdentifier("");
-                    entry.setPayloadType("");
-                    return entry;
+                    return null;
                 }
             }
-            NewDomainEventEntry newEntry = new NewDomainEventEntry(oldEntry);
+            NewDomainEventEntry newEntry = new NewDomainEventEntry(aggregateType, aggregateIdentifier, sequenceNumber,
+                                                                   timeStamp);
             final Element metaData = rootElement.element("metaData");
             final String payloadType = rootElement.getName();
             final String payloadRevision = rootElement.attributeValue("eventRevision");

@@ -14,16 +14,14 @@
  * limitations under the License.
  */
 
-package org.axonframework.migration;
+package org.axonframework.migration.eventstore;
 
 import org.axonframework.eventstore.EventUpcaster;
-import org.axonframework.migration.eventstore.DomainEventEntry;
-import org.axonframework.migration.eventstore.DomainEventEntryTransformer;
-import org.axonframework.migration.eventstore.NewDomainEventEntry;
+import org.axonframework.serializer.SerializedDomainEventData;
 import org.hibernate.Session;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.context.support.ClassPathXmlApplicationContext;
+import org.springframework.context.ApplicationContext;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -34,7 +32,6 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Properties;
-import java.util.Scanner;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -73,42 +70,27 @@ public class JpaEventStoreMigrator {
 
     private List<EventUpcaster> upcasters;
 
-    public static void main(String[] args) throws Exception {
-        try {
-            ClassPathXmlApplicationContext context = new ClassPathXmlApplicationContext(
-                    "/META-INF/spring/migration-config.xml",
-                    "file:app-specific-context.xml");
-            JpaEventStoreMigrator runner = new JpaEventStoreMigrator();
-            runner.run(context);
-            context.stop();
-        } catch (Throwable e) {
-            e.printStackTrace();
-        } finally {
-            while (System.in.available() > 0) {
-                System.in.skip(System.in.available());
-            }
-            System.out.println("Press enter to quit");
-            new Scanner(System.in).nextLine();
-        }
-    }
-
-    private void run(ClassPathXmlApplicationContext context) throws Exception {
+    public JpaEventStoreMigrator(ApplicationContext context) {
         context.getAutowireCapableBeanFactory().autowireBean(this);
         txTemplate = new TransactionTemplate(txManager);
         txTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         upcasters = new ArrayList<EventUpcaster>(context.getBeansOfType(EventUpcaster.class).values());
+    }
+
+    public void run() throws Exception {
         final AtomicInteger updateCount = new AtomicInteger();
         final AtomicLong lastId = new AtomicLong(Long.parseLong(configuration.getProperty("lastProcessedId", "-1")));
         try {
             TransactionTemplate template = new TransactionTemplate(txManager);
             template.setReadOnly(true);
-            while(template.execute(new TransactionCallback<Boolean>() {
+            while (template.execute(new TransactionCallback<Boolean>() {
                 @Override
                 public Boolean doInTransaction(TransactionStatus status) {
                     final Session hibernate = entityManager.unwrap(Session.class);
                     System.out.println("Fetching entries from old event store");
                     Iterator<Object[]> results = hibernate.createQuery(
-                            "SELECT e.aggregateIdentifier, e.sequenceNumber, e.type, e.id FROM DomainEventEntry e WHERE e.id > :lastIdentifier ORDER BY e.id ASC")
+                            "SELECT e.aggregateIdentifier, e.sequenceNumber, e.type, e.id FROM DomainEventEntry e "
+                                    + "WHERE e.id > :lastIdentifier ORDER BY e.id ASC")
                                                           .setFetchSize(1000)
                                                           .setMaxResults(100000)
                                                           .setParameter("lastIdentifier", lastId.get())
@@ -131,14 +113,14 @@ public class JpaEventStoreMigrator {
                         executor.submit(new TransformationTask(aggregateIdentifier, sequenceNumber, type, entryId));
                         final int updated = updateCount.incrementAndGet();
                         if (updated % 1000 == 0) {
-                            System.out.println("Converted (or skipped) " + updateCount + " items");
+                            System.out.println("Converted " + updateCount + " items");
                         }
                     }
                     return true;
                 }
             })) {
-                System.out.println("Preparing next batch of 100 000.");
-            };
+                System.out.println("Preparing next batch.");
+            }
         } finally {
             executor.shutdown();
             executor.awaitTermination(5, TimeUnit.MINUTES);
@@ -185,7 +167,12 @@ public class JpaEventStoreMigrator {
                 }
 
                 DomainEventEntry entry = entityManager.find(DomainEventEntry.class, entryId);
-                final NewDomainEventEntry newEntry = transformer.transform(entry, upcasters);
+                SerializedDomainEventData newEntry = transformer.transform(entry.getSerializedEvent(),
+                                                                           entry.getType(),
+                                                                           entry.getAggregateIdentifier(),
+                                                                           entry.getSequenceNumber(),
+                                                                           entry.getTimeStamp(),
+                                                                           upcasters);
                 if (newEntry != null) {
                     entityManager.persist(newEntry);
                     entityManager.flush();

@@ -31,11 +31,6 @@
     </dependencySets>
     <files>
         <file>
-            <source>${project.build.directory}/${project.artifactId}-${project.version}.jar</source>
-            <outputDirectory>/</outputDirectory>
-            <destName>migration-tool.jar</destName>
-        </file>
-        <file>
             <source>src/main/resources/sample.identifiers.properties</source>
             <outputDirectory>/</outputDirectory>
             <destName>identifiers.properties</destName>

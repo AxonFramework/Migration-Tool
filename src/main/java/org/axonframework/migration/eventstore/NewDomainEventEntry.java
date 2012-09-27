@@ -1,6 +1,11 @@
 package org.axonframework.migration.eventstore;
 
+import org.axonframework.serializer.SerializedDomainEventData;
+import org.axonframework.serializer.SerializedMetaData;
+import org.axonframework.serializer.SerializedObject;
+import org.axonframework.serializer.SimpleSerializedObject;
 import org.hibernate.annotations.Index;
+import org.joda.time.DateTime;
 
 import java.io.Serializable;
 import javax.persistence.Basic;
@@ -13,10 +18,10 @@ import javax.persistence.Lob;
 /**
  * @author Allard Buijze
  */
-@SuppressWarnings("FieldCanBeLocal")
+@SuppressWarnings({"FieldCanBeLocal", "UnusedDeclaration"})
 @Entity
 @IdClass(NewDomainEventEntry.PK.class)
-public class NewDomainEventEntry {
+public class NewDomainEventEntry implements SerializedDomainEventData<byte[]> {
 
     @Id
     @Column(updatable = false)
@@ -45,14 +50,18 @@ public class NewDomainEventEntry {
     @Lob
     private byte[] payload;
 
-    public NewDomainEventEntry() {
+    /**
+     * Constructor for JPA
+     */
+    protected NewDomainEventEntry() {
     }
 
-    public NewDomainEventEntry(DomainEventEntry oldEntry) {
-        this.type = oldEntry.getType();
-        this.aggregateIdentifier = oldEntry.getAggregateIdentifier();
-        this.sequenceNumber = oldEntry.getSequenceNumber();
-        this.timeStamp = oldEntry.getTimeStamp();
+    public NewDomainEventEntry(String aggregateType, String aggregateIdentifier, long sequenceNumber,
+                               String timeStamp) {
+        this.type = aggregateType;
+        this.aggregateIdentifier = aggregateIdentifier;
+        this.sequenceNumber = sequenceNumber;
+        this.timeStamp = timeStamp;
     }
 
     public void setEventIdentifier(String eventIdentifier) {
@@ -73,6 +82,36 @@ public class NewDomainEventEntry {
 
     public void setPayload(byte[] payload) {
         this.payload = payload;
+    }
+
+    @Override
+    public String getEventIdentifier() {
+        return eventIdentifier;
+    }
+
+    @Override
+    public Object getAggregateIdentifier() {
+        return aggregateIdentifier;
+    }
+
+    @Override
+    public long getSequenceNumber() {
+        return sequenceNumber;
+    }
+
+    @Override
+    public DateTime getTimestamp() {
+        return new DateTime(timeStamp);
+    }
+
+    @Override
+    public SerializedObject<byte[]> getMetaData() {
+        return new SerializedMetaData<byte[]>(metaData, byte[].class);
+    }
+
+    @Override
+    public SerializedObject<byte[]> getPayload() {
+        return new SimpleSerializedObject<byte[]>(payload, byte[].class, payloadType, payloadRevision);
     }
 
     /**
@@ -134,5 +173,4 @@ public class NewDomainEventEntry {
                     '}';
         }
     }
-
 }

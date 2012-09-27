@@ -22,10 +22,10 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>org.axonframework.tools</groupId>
-    <artifactId>eventstore-migrator</artifactId>
+    <artifactId>migration-tool</artifactId>
     <version>1.0-SNAPSHOT</version>
     
-    <name>Axon Event Store Migration Tool</name>
+    <name>Axon Migration Tool</name>
     <description>This module contains tools and classes in support of migrating data from Axon 1.x versions to the new
         optimized Axon 2.0 data structures
     </description>
@@ -270,7 +270,7 @@
                     <archive>
                         <manifest>
                             <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
-                            <mainClass>org.axonframework.migration.JpaEventStoreMigrator</mainClass>
+                            <mainClass>org.axonframework.migration.Migrator</mainClass>
                         </manifest>
                     </archive>
                 </configuration>
