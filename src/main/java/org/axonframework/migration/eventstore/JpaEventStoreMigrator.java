@@ -46,6 +46,10 @@ import javax.persistence.PersistenceContext;
  */
 public class JpaEventStoreMigrator {
 
+    private static final int CONVERSION_BATCH_SIZE = 50;
+    private static final int QUERY_BATCH_SIZE = 100000;
+    private static final int MAX_BACKLOG_SIZE = QUERY_BATCH_SIZE / CONVERSION_BATCH_SIZE;
+
     @PersistenceContext
     private EntityManager entityManager;
 
@@ -61,12 +65,11 @@ public class JpaEventStoreMigrator {
 
     private TransactionTemplate txTemplate;
 
-    ExecutorService executor = new ThreadPoolExecutor(10,
-                                                      10,
-                                                      5,
-                                                      TimeUnit.SECONDS,
-                                                      new ArrayBlockingQueue<Runnable>(50),
-                                                      new ThreadPoolExecutor.CallerRunsPolicy());
+    private final ArrayBlockingQueue<Runnable> workQueue = new ArrayBlockingQueue<Runnable>(MAX_BACKLOG_SIZE);
+    private final ExecutorService executor = new ThreadPoolExecutor(10, 20, 15,
+                                                                    TimeUnit.SECONDS,
+                                                                    workQueue,
+                                                                    new ThreadPoolExecutor.CallerRunsPolicy());
 
     private List<EventUpcaster> upcasters;
 
@@ -77,25 +80,26 @@ public class JpaEventStoreMigrator {
         upcasters = new ArrayList<EventUpcaster>(context.getBeansOfType(EventUpcaster.class).values());
     }
 
-    public void run() throws Exception {
+    public boolean run() throws Exception {
         final AtomicInteger updateCount = new AtomicInteger();
+        final AtomicInteger skipCount = new AtomicInteger();
         final AtomicLong lastId = new AtomicLong(Long.parseLong(configuration.getProperty("lastProcessedId", "-1")));
         try {
             TransactionTemplate template = new TransactionTemplate(txManager);
             template.setReadOnly(true);
+            System.out.println("Starting conversion. Fetching batches of " + QUERY_BATCH_SIZE + " items.");
             while (template.execute(new TransactionCallback<Boolean>() {
                 @Override
                 public Boolean doInTransaction(TransactionStatus status) {
                     final Session hibernate = entityManager.unwrap(Session.class);
-                    System.out.println("Fetching entries from old event store");
                     Iterator<Object[]> results = hibernate.createQuery(
                             "SELECT e.aggregateIdentifier, e.sequenceNumber, e.type, e.id FROM DomainEventEntry e "
                                     + "WHERE e.id > :lastIdentifier ORDER BY e.id ASC")
                                                           .setFetchSize(1000)
-                                                          .setMaxResults(100000)
+                                                          .setMaxResults(QUERY_BATCH_SIZE)
+                                                          .setReadOnly(true)
                                                           .setParameter("lastIdentifier", lastId.get())
                                                           .iterate();
-                    System.out.println("Starting conversion process");
                     if (!results.hasNext()) {
                         System.out.println("Empty batch. Assuming we're done.");
                         return false;
@@ -104,22 +108,25 @@ public class JpaEventStoreMigrator {
                         return false;
                     }
                     while (results.hasNext()) {
-                        Object[] item = results.next();
-                        String aggregateIdentifier = (String) item[0];
-                        long sequenceNumber = (Long) item[1];
-                        String type = (String) item[2];
-                        Long entryId = (Long) item[3];
-                        lastId.set(entryId);
-                        executor.submit(new TransformationTask(aggregateIdentifier, sequenceNumber, type, entryId));
-                        final int updated = updateCount.incrementAndGet();
-                        if (updated % 1000 == 0) {
-                            System.out.println("Converted " + updateCount + " items");
+                        List<ConversionItem> conversionBatch = new ArrayList<ConversionItem>();
+                        while (conversionBatch.size() < CONVERSION_BATCH_SIZE && results.hasNext()) {
+                            Object[] item = results.next();
+                            String aggregateIdentifier = (String) item[0];
+                            long sequenceNumber = (Long) item[1];
+                            String type = (String) item[2];
+                            Long entryId = (Long) item[3];
+                            lastId.set(entryId);
+                            conversionBatch.add(new ConversionItem(sequenceNumber, aggregateIdentifier, type, entryId));
+                        }
+                        if (!conversionBatch.isEmpty()) {
+                            executor.submit(new TransformationTask(conversionBatch, skipCount));
                         }
                     }
                     return true;
                 }
             })) {
-                System.out.println("Preparing next batch.");
+                System.out.println("Reading next batch, starting at ID " + lastId.get() + ".");
+                System.out.println("Estimated backlog size is currently: " + (workQueue.size() * CONVERSION_BATCH_SIZE));
             }
         } finally {
             executor.shutdown();
@@ -129,20 +136,17 @@ public class JpaEventStoreMigrator {
             }
         }
         System.out.println("In total " + updateCount.get() + " items have been converted.");
+        return skipCount.get() == 0;
     }
 
     private class TransformationTask implements Runnable, TransactionCallback<Void> {
 
-        private final String aggregateIdentifier;
-        private final long sequenceNumber;
-        private final String type;
-        private final long entryId;
+        private final List<ConversionItem> conversionItems;
+        private final AtomicInteger skipCount;
 
-        public TransformationTask(String aggregateIdentifier, long sequenceNumber, String type, long entryId) {
-            this.aggregateIdentifier = aggregateIdentifier;
-            this.sequenceNumber = sequenceNumber;
-            this.type = type;
-            this.entryId = entryId;
+        public TransformationTask(List<ConversionItem> conversionItems, AtomicInteger skipCount) {
+            this.conversionItems = new ArrayList<ConversionItem>(conversionItems);
+            this.skipCount = skipCount;
         }
 
         @Override
@@ -153,34 +157,69 @@ public class JpaEventStoreMigrator {
         @Override
         public Void doInTransaction(TransactionStatus status) {
             try {
-                long count = (Long)
-                        entityManager.createQuery("SELECT count(e) FROM NewDomainEventEntry e "
-                                                          + "WHERE e.aggregateIdentifier = :aggregateIdentifier "
-                                                          + "AND e.sequenceNumber = :sequenceNumber "
-                                                          + "AND e.type = :type")
-                                     .setParameter("aggregateIdentifier", aggregateIdentifier)
-                                     .setParameter("type", type)
-                                     .setParameter("sequenceNumber", sequenceNumber)
-                                     .getSingleResult();
-                if (count != 0) {
-                    return null;
-                }
+                for (ConversionItem conversionItem : conversionItems) {
+                    long count = (Long)
+                            entityManager.createQuery("SELECT count(e) FROM NewDomainEventEntry e "
+                                                              + "WHERE e.aggregateIdentifier = :aggregateIdentifier "
+                                                              + "AND e.sequenceNumber = :sequenceNumber "
+                                                              + "AND e.type = :type")
+                                         .setParameter("aggregateIdentifier", conversionItem.getAggregateIdentifier())
+                                         .setParameter("type", conversionItem.getType())
+                                         .setParameter("sequenceNumber", conversionItem.getSequenceNumber())
+                                         .getSingleResult();
+                    if (count != 0) {
+                        return null;
+                    }
 
-                DomainEventEntry entry = entityManager.find(DomainEventEntry.class, entryId);
-                SerializedDomainEventData newEntry = transformer.transform(entry.getSerializedEvent(),
-                                                                           entry.getType(),
-                                                                           entry.getAggregateIdentifier(),
-                                                                           entry.getSequenceNumber(),
-                                                                           entry.getTimeStamp(),
-                                                                           upcasters);
-                if (newEntry != null) {
-                    entityManager.persist(newEntry);
-                    entityManager.flush();
+                    DomainEventEntry entry = entityManager.find(DomainEventEntry.class, conversionItem.getEntryId());
+                    SerializedDomainEventData newEntry = transformer.transform(entry.getSerializedEvent(),
+                                                                               entry.getType(),
+                                                                               entry.getAggregateIdentifier(),
+                                                                               entry.getSequenceNumber(),
+                                                                               entry.getTimeStamp(),
+                                                                               upcasters);
+                    if (newEntry != null) {
+                        entityManager.persist(newEntry);
+                    } else {
+                        skipCount.incrementAndGet();
+                    }
                 }
             } catch (Exception e) {
                 e.printStackTrace();
+                skipCount.incrementAndGet();
             }
             return null;
+        }
+    }
+
+    private static class ConversionItem {
+
+        private final long sequenceNumber;
+        private final String aggregateIdentifier;
+        private final String type;
+        private final long entryId;
+
+        private ConversionItem(long sequenceNumber, String aggregateIdentifier, String type, long entryId) {
+            this.sequenceNumber = sequenceNumber;
+            this.aggregateIdentifier = aggregateIdentifier;
+            this.type = type;
+            this.entryId = entryId;
+        }
+
+        public long getSequenceNumber() {
+            return sequenceNumber;
+        }
+
+        public String getAggregateIdentifier() {
+            return aggregateIdentifier;
+        }
+
+        public String getType() {
+            return type;
+        }
+
+        public long getEntryId() {
+            return entryId;
         }
     }
 }

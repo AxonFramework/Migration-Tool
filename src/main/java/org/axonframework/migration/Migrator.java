@@ -21,13 +21,15 @@ public class Migrator {
         System.out.println();
 
         System.out.println("Starting to migrate the Event Store");
-        new JpaEventStoreMigrator(context).run();
-
-        System.out.println( "Event Store migrated.\n"
-                                    + "A new table has been created (e.g. NewDomainEventEntries) with the new Event "
-                                    + "Store. Rename tables when ready to finalize migration of your application.");
+        if (new JpaEventStoreMigrator(context).run()) {
+            System.out.println("Event Store migrated.\n"
+                                       + "A new table has been created (e.g. NewDomainEventEntries) with the new Event "
+                                       + "Store. Rename tables when ready to finalize migration of your application.");
+        } else {
+            System.out.println("The migration process has finished, but didn't complete the entire migration.\n"
+                                       + "Make sure all identifier mappings are present and run the process again.");
+        }
         System.out.println();
         context.stop();
-        System.out.println("Done...");
     }
 }

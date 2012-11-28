@@ -132,7 +132,7 @@ public class DomainEventEntryTransformer {
         } else {
             if (silencedIdentifiers.add(rootElement.getName())) {
                 System.out.println(format(
-                        "Unknown identifier name for event of type [%s]. There is more than one candidate: %s. "
+                        "No identifier mapping available for [%s]. There is more than one candidate: %s. "
                                 + "Make sure there is a mapping for it in identifiers.properties",
                         rootElement.getName(),
                         candidates));
