@@ -38,7 +38,7 @@ Note that the migration tool will store the converted events in another table th
 
 Questions and help
 ------------------
-If you need help, or have a question about this migration tool, you can post is on the mailing list: axonframework@googlegroups.com.
+If you need help, or have a question about this migration tool, you can post it on [AxonIQ's discussion platform](https://discuss.axoniq.io/)
 
 License
 -------
